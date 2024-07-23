@@ -667,7 +667,10 @@ class GPTQQuantizer(object):
             layer_device = qlayers[name].device
             qlayers[name].to("cpu")
             layers[name], scale, zero, g_idx = layers[name].to("cpu"), scale.to("cpu"), zero.to("cpu"), g_idx.to("cpu")
-            qlayers[name].pack(layers[name], scale, zero, g_idx)
+            if self.use_marlin:
+                qlayers[name].pack(layers[name], scale)
+            else:
+                qlayers[name].pack(layers[name], scale, zero, g_idx)
             qlayers[name].to(layer_device)
 
         logger.info("Model packed.")
