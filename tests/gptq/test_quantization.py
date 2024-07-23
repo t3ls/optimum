@@ -282,6 +282,41 @@ class GPTQTestExllamav2(GPTQTest):
             _ = AutoGPTQForCausalLM.from_quantized(tmpdirname, device_map={"": self.device_for_inference})
 
 
+class GPTQTestMarlin(GPTQTest):
+    desc_act = False
+    use_marlin = True
+
+    def test_serialization(self):
+        # don't need to test
+        pass
+
+    def test_marlin_serialization(self):
+        """
+        Test the serialization of the model and the loading of the quantized weights with exllamav2 kernel
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            self.quantizer.save(self.quantized_model, tmpdirname)
+            self.quantized_model.config.save_pretrained(tmpdirname)
+            with init_empty_weights():
+                empty_model = AutoModelForCausalLM.from_config(
+                    AutoConfig.from_pretrained(self.model_name), torch_dtype=torch.float16
+                )
+            empty_model.tie_weights()
+            quantized_model_from_saved = load_quantized_model(
+                empty_model,
+                save_folder=tmpdirname,
+                device_map={"": self.device_for_inference},
+            )
+            self.check_quantized_layers_type(quantized_model_from_saved, "marlin")
+
+            # transformers and auto-gptq compatibility
+            # quantized models are more compatible with device map than
+            # device context managers (they're never used in transformers testing suite)
+            _ = AutoModelForCausalLM.from_pretrained(tmpdirname, device_map={"": self.device_for_inference})
+            _ = AutoGPTQForCausalLM.from_quantized(tmpdirname, device_map={"": self.device_for_inference})
+
+
 class GPTQTestNoBlockCaching(GPTQTest):
     cache_block_outputs = False
 

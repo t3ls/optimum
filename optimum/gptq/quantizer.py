@@ -14,9 +14,11 @@
 # limitations under the License.
 import json
 import os
+import sys
 from enum import Enum
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, Union
+from packaging import version
 
 import torch
 from torch import nn
@@ -26,11 +28,17 @@ from transformers.pytorch_utils import Conv1D
 from transformers.utils.quantization_config import QuantizationMethod
 
 from ..utils import is_accelerate_available, is_auto_gptq_available
+from ..utils.import_utils import AUTOGPTQ_MARLIN_MINIMUM_VERSION
 from ..utils.modeling_utils import recurse_getattr
 from .constants import GPTQ_CONFIG
 from .data import get_dataset, prepare_dataset
 from .utils import get_block_name_with_pattern, get_device, get_layers, get_preceding_modules, get_seqlen
 
+# The package importlib_metadata is in a different place, depending on the python version.
+if sys.version_info < (3, 8):
+    import importlib_metadata
+else:
+    import importlib.metadata as importlib_metadata
 
 if is_accelerate_available():
     from accelerate import (
@@ -75,6 +83,7 @@ class GPTQQuantizer(object):
         pad_token_id: Optional[int] = None,
         disable_exllama: bool = False,
         exllama_config: Dict[str, Any] = None,
+        use_marlin: bool = False,
         max_input_length: Optional[int] = None,
         cache_block_outputs: Optional[bool] = True,
         modules_in_block_to_quantize: Optional[List[List[str]]] = None,
@@ -119,6 +128,8 @@ class GPTQQuantizer(object):
                 Whether to use exllama backend. Only works with `bits` = 4.
             exllama_config (`Dict[str, Any]`, *optional*):
                 The exllama config. You can specify the version of the exllama kernel through the `version` key. Defaults to `{"version": 2}` if unset.
+            use_marlin (`bool`, defaults to `False`):
+                Whether to use marlin backend. Only works with `bits` = 4.
             max_input_length (`Optional[int]`, defaults to `None`):
                 The maximum input length. This is needed to initialize a buffer that depends on the maximum expected input length.
                 It is specific to the exllama backend with act-order.
@@ -146,6 +157,7 @@ class GPTQQuantizer(object):
         self.pad_token_id = pad_token_id
         self.disable_exllama = disable_exllama
         self.exllama_config = exllama_config
+        self.use_marlin = use_marlin
         self.max_input_length = max_input_length
         self.quant_method = QuantizationMethod.GPTQ
         self.cache_block_outputs = cache_block_outputs
@@ -260,6 +272,7 @@ class GPTQQuantizer(object):
             bits=self.bits,
             disable_exllama=self.disable_exllama or self.exllama_version != ExllamaVersion.ONE,
             disable_exllamav2=self.disable_exllama or self.exllama_version != ExllamaVersion.TWO,
+            use_marlin=self.use_marlin,
         )
         if isinstance(module, QuantLinear):
             return
@@ -545,6 +558,14 @@ class GPTQQuantizer(object):
             torch.cuda.empty_cache()
 
         if self.bits == 4:
+            if self.use_marlin:
+                # marlin requires all the modules to be on GPU
+                version_autogptq = version.parse(importlib_metadata.version("auto_gptq"))
+                if AUTOGPTQ_MARLIN_MINIMUM_VERSION >= version_autogptq:
+                    raise ImportError(
+                        f"Found an incompatible version of auto-gptq. Found version {version_autogptq}, but only version above {AUTOGPTQ_MARLIN_MINIMUM_VERSION} are supported with marlin"
+                    )
+                self.disable_exllama = True
             # device not on gpu
             if device == torch.device("cpu") or (has_device_map and any(d in devices for d in ["cpu", "disk"])):
                 if not self.disable_exllama:
@@ -632,6 +653,7 @@ class GPTQQuantizer(object):
             bits=self.bits,
             disable_exllama=self.disable_exllama or self.exllama_version != ExllamaVersion.ONE,
             disable_exllamav2=self.disable_exllama or self.exllama_version != ExllamaVersion.TWO,
+            use_marlin=self.use_marlin,
         )
         logger.info("Packing model...")
         layers = get_layers(model)
