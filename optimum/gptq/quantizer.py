@@ -609,7 +609,7 @@ class GPTQQuantizer(object):
             model (`nn.Module`):
                 The input model
         """
-        if self.bits == 4 and not self.disable_exllama:
+        if self.bits == 4 and not self.disable_exllama and not self.use_marlin:
             if get_device(model) == torch.device("cpu") or (
                 hasattr(model, "hf_device_map") and any(d in model.hf_device_map for d in ["cpu", "disk"])
             ):
